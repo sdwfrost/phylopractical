@@ -3,7 +3,7 @@ library(phangorn)
 library(adephylo)
 library(magrittr)
 
-tr <- read.tree("LASV.nwk")
+tr <- read.tree("data/ebola.fas.treefile")
 td <- tr$tip.label %>% strsplit(.,"-|_") %>% lapply(.,tail,1) %>% unlist %>% as.double
 tr.rtt <- rtt(tr,td,objective="rsquared")
 tr.rtt$edge.length[tr.rtt$edge.length<0] <- 0.0
@@ -42,5 +42,12 @@ lasv.host <- rep("Human",length(lasv.chronos$tip.label))
 lasv.host[grep("Josiah",lasv.chronos$tip.label)] <- "Lab"
 lasv.host[grep("LM",lasv.chronos$tip.label)] <- "Mastomys"
 lasv.host[grep("ZO",lasv.chronos$tip.label)] <- "Mastomys"
-lasv.annotations <- data.frame(taxa=lasv.chronos$tip.label,Host=lasv.host)
-write.table(lasv.annotations,"lasv.txt",col.names=TRUE,row.names=FALSE,sep="\t")
+lasv.annotations <- data.frame(Taxa=lasv.chronos$tip.label,Time=td,Host=lasv.host)
+write.table(lasv.annotations,"data/lasv.txt",col.names=TRUE,row.names=FALSE,sep="\t")
+
+country <- rep("DRC",29)
+country[13:19]="SierraLeone"
+country[20:22]="Guinea"
+country[c(3,26,27,28)]="Gabon"
+ebola.annotations <- data.frame(Taxa=tr$tip.label,Time=td,Country=country)
+write.table(ebola.annotations,"data/ebola.txt",col.names=TRUE,row.names=FALSE,sep="\t")

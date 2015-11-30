@@ -1,5 +1,5 @@
 ---
-title: "Phylogenetics Practical"
+title: "Phylodynamics Practical"
 author: "Simon Frost"
 date: "1 December 2015"
 output: html_document
@@ -14,7 +14,7 @@ suppressPackageStartupMessages(library(phangorn))
 suppressPackageStartupMessages(library(ggplot2))
 suppressPackageStartupMessages(library(adephylo))
 suppressPackageStartupMessages(library(magrittr))
-#suppressPackageStartupMessages(library(ggtree))
+suppressWarnings(suppressMessages(library(ggtree)))
 ```
 
 ```{r, echo=FALSE}
@@ -418,39 +418,59 @@ busyIndicator <- function(text = "Calculation in progress..",img = "shinysky/bus
 ```
 
 
-## Loading the data
+## Loading the trees
+
+First of all, we have to load a tree. Use the dialogue below to choose a file that contains a tree in Newick format, then press 'Submit'.
 
 ```{r, echo=FALSE}
 inputPanel(
-  fileInput("fasta","Choose sequence file"),
-  actionButton("submit","Submit")
+  fluidPage(
+    fileInput("nwk","Choose tree file")
+  )
+)
+renderPrint({
+  tr()
+})
+```
+
+```{r, echo=FALSE}
+tr <- reactive({
+    if(length(input$nwk$datapath)==0) return(invisible())
+    read.tree(input$nwk$datapath[1])
+})
+```
+
+
+## Loading annotations
+
+```{r, echo=FALSE}
+inputPanel(
+  fluidPage(
+    fileInput("annotation","Choose annotation file")
+  )
+)
+fluidPage(
+  renderDataTable({
+    annotations()
+  })
 )
 ```
 
 ```{r, echo=FALSE}
-seqs <- reactive({
-    if(input$submit==0) return()
-    read.dna(input$fasta$datapath[1],format="fasta",as.matrix=TRUE)
+annotations <- reactive({
+    if(length(input$annotation$datapath)==0) return()
+    tbl <- read.table(input$annotation$datapath[1],header=T,row.names=NULL,sep="\t")
 })
 ```
 
-## Visualizing the alignment
 
-```{r, echo=FALSE}
-actionButton("drawalign","Plot alignment")
-renderPlot({
-  if(input$drawalign==0) return()
-  image(seqs())
-})
-```
-
-## Getting a rough tree
+## Distances from a tree
 
 ```{r,echo=FALSE}
 actionButton("calcdist","Calculate distances")
 dst <- reactive({
   if(input$calcdist==0) return()
-  dist.dna(seqs(),model="TN93",as.matrix=TRUE)
+  cophenetic.phylo(tr())
 })
 ```
 
@@ -464,59 +484,16 @@ renderPlot({
 })
 ```
 
-## A rough tree
-
-```{r,echo=FALSE}
-actionButton("calcnj","NJ tree")
-njt <- reactive({
-  if(input$calcnj==0) return()
-  nj(dst())
-})
-```
+## Plotting the tree
 
 ```{r, echo=FALSE}
-actionButton("drawnj","Plot NJ tree")
+actionButton("drawtree","Plot tree")
 renderPlot({
-  if(input$drawnj==0) return()
-  plot(njt(),type="unrooted")
+  if(input$drawtree==0) return()
+  ggtree(tr())
 })
 ```
 
-## Finding the best model
-
-```{r, echo=FALSE}
-actionButton("mtest","Model test")
-mt <- reactive({
-  if(input$mtest==0) return()
-  modelTest(as.phyDat(seqs()),model=c("JC","HKY","TN93","GTR"))
-})
-renderDataTable(mt())
-```
-
-## Optimising a tree
-
-### Initialising the likelihood
-
-```{r, echo=FALSE}
-actionButton("initlike","Initialise likelihood")
-mlobj <- reactive({
-  if(input$initlike==0) return()
-  p <- pml(as.phylo(njt()),as.phyDat(seqs()))
-  p
-})
-renderPrint(print(mlobj()))
-```
-
-### Optimising the likelihood
-
-```{r, echo=FALSE}
-actionButton("optlike","Optimise likelihood")
-optmlobj <- reactive({
-  if(input$optlike==0) return()
-  op <- optim.pml(mlobj(),optNni=TRUE,optBf=TRUE,optQ=TRUE,optGamma=TRUE,optInv=TRUE,optEdge=TRUE,model="GTR")
-})
-renderPrint(print(optmlobj()))
-```
 
 ## Rooting the tree
 
@@ -524,23 +501,46 @@ renderPrint(print(optmlobj()))
 actionButton("rtt","Root-to-tip regression")
 treertt <- reactive({
   if(input$rtt==0) return()
-    tr <- optmlobj()$tree
-    tr <- multi2di(tr)
-    tr$edge.length <- tr$edge.length+1e-6
-    td <- tr$tip.label %>% strsplit(.,"_") %>% lapply(.,tail,1) %>% unlist %>% as.double
-    r <- rtt(tr,td,objective="rsquared")
-    r
+    tr.rtt <- tr()
+    tr.rtt <- multi2di(tr.rtt)
+    tr.rtt$edge.length <- tr.rtt$edge.length+1e-6
+    td <- tr.rtt$tip.label %>% strsplit(.,"_|-") %>% lapply(.,tail,1) %>% unlist %>% as.double
+    tr.rtt <- rtt(tr.rtt,td,objective="rsquared")
+    tr.rtt
 })
 renderPlot({
   tr.rtt <- treertt()
   rd <- distRoot(tr.rtt)
-  td <- tr.rtt$tip.label %>% strsplit(.,"_") %>% lapply(.,tail,1) %>% unlist %>% as.double
-  plot(rd~td)
+  td <- tr.rtt$tip.label %>% strsplit(.,"_|-") %>% lapply(.,tail,1) %>% unlist %>% as.double
+  rtt.lm <- lm(rd~td)
+  root.time <- unname(-as.double(coef(rtt.lm)[1])/coef(rtt.lm)[2])
+  plot(rd~td,xlab="Time",ylab="Root to tip distance",ylim=c(0,max(rd)),xlim=c(root.time,max(td)),pch=16,col="red")
+  abline(rtt.lm)
+abline(h=0,lty=2)
 })
 ```
 
+## 'Clockifying' a tree
 
-## Reconstructing jumps
-
-
-
+```{r,echo=FALSE}
+actionButton("clockify","Clockify!")
+treertt <- reactive({
+  if(input$rtt==0) return()
+    tr.rtt <- tr()
+    tr.rtt <- multi2di(tr.rtt)
+    tr.rtt$edge.length <- tr.rtt$edge.length+1e-6
+    td <- tr.rtt$tip.label %>% strsplit(.,"_|-") %>% lapply(.,tail,1) %>% unlist %>% as.double
+    tr.rtt <- rtt(tr.rtt,td,objective="rsquared")
+    tr.rtt
+})
+renderPlot({
+  tr.rtt <- treertt()
+  rd <- distRoot(tr.rtt)
+  td <- tr.rtt$tip.label %>% strsplit(.,"_|-") %>% lapply(.,tail,1) %>% unlist %>% as.double
+  rtt.lm <- lm(rd~td)
+  root.time <- unname(-as.double(coef(rtt.lm)[1])/coef(rtt.lm)[2])
+  plot(rd~td,xlab="Time",ylab="Root to tip distance",ylim=c(0,max(rd)),xlim=c(root.time,max(td)),pch=16,col="red")
+  abline(rtt.lm)
+abline(h=0,lty=2)
+})
+```
