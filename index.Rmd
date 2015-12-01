@@ -15,6 +15,7 @@ suppressPackageStartupMessages(library(ggplot2))
 suppressPackageStartupMessages(library(adephylo))
 suppressPackageStartupMessages(library(magrittr))
 suppressWarnings(suppressMessages(library(ggtree)))
+suppressWarnings(suppressMessages(library(gridExtra)))
 ```
 
 ```{r, echo=FALSE}
@@ -418,9 +419,9 @@ busyIndicator <- function(text = "Calculation in progress..",img = "shinysky/bus
 ```
 
 
-## Loading the trees
+## Loading the tree
 
-First of all, we have to load a tree. Use the dialogue below to choose a file that contains a tree in Newick format, then press 'Submit'.
+First of all, we have to load a tree. Use the dialogue below to choose a file that contains a tree in Newick format.
 
 ```{r, echo=FALSE}
 inputPanel(
@@ -430,6 +431,20 @@ inputPanel(
 )
 renderPrint({
   tr()
+})
+renderPlot({
+  if(length(input$nwk$datapath)==0) return(invisible())
+  g <- ggtree(tr(),layout="unrooted")
+  g <- g + ggtitle("Unrooted")
+  g
+})
+renderPlot({
+  if(length(input$nwk$datapath)==0) return(invisible())
+  tree <- tr()
+  mrd <- max(distRoot(tree))
+  g <- ggtree(tree,showDistance=TRUE) + scale_x_continuous(limits=c(0,mrd*1.5))
+  g <- g +ggtitle("Rooted")
+  g + geom_text(aes(label=label),size=2,hjust=-0.05)
 })
 ```
 
@@ -443,12 +458,30 @@ tr <- reactive({
 
 ## Loading annotations
 
+Secondly, you need to load in annotations; for this practical, annotations comprise of the sampling time and a grouping variable. Use the dialogue below to upload the annotations file.
+
 ```{r, echo=FALSE}
 inputPanel(
   fluidPage(
     fileInput("annotation","Choose annotation file")
   )
 )
+```
+
+Here is a summary of the annotations.
+
+```{r,echo=FALSE}
+fluidPage(
+  renderPrint({
+    if(length(input$annotation$datapath)==0) return(invisible())
+    summary(annotations())
+  })
+)
+```
+
+Here is a more detailed view of the annotations.
+
+```{r, echo=FALSE}
 fluidPage(
   renderDataTable({
     annotations()
@@ -466,81 +499,150 @@ annotations <- reactive({
 
 ## Distances from a tree
 
+We can calculate the distances (in terms of genetic divergence) between sequences from the phylogenetic tree. This, along with the tree itself, can sometimes help to indicate levels of clustering in the data.
+
 ```{r,echo=FALSE}
 actionButton("calcdist","Calculate distances")
-dst <- reactive({
-  if(input$calcdist==0) return()
-  cophenetic.phylo(tr())
-})
 ```
 
-```{r, echo=FALSE}
-actionButton("drawdist","Plot distances")
+A histogram of the distances.
+
+```{r,echo=FALSE}
 renderPlot({
-  if(input$drawdist==0) return()
+  if(input$calcdist==0) return()
   d <- dst()
   d <- d[lower.tri(d)]
   hist(d)
 })
 ```
 
-## Plotting the tree
+A summary of the distances.
 
 ```{r, echo=FALSE}
-actionButton("drawtree","Plot tree")
-renderPlot({
-  if(input$drawtree==0) return()
-  ggtree(tr())
+renderPrint({
+  if(input$calcdist==0) return(invisible())
+  d <- dst()
+  d <- d[lower.tri(d)]
+  summary(d)
+})
+```
+
+```{r,echo=FALSE}
+dst <- reactive({
+  if(input$calcdist==0) return()
+  cophenetic.phylo(tr())
 })
 ```
 
 
-## Rooting the tree
+## Root-to-tip regression
+
+The phylogeny, as loaded into the program, may be rooted arbitrarily. To root the tree on the basis of sampling time, we can perform a *root-to-tip* regression, in which we try to find the root that gives the best straight line fit between root-to-tip distances and sampling time. This gives us an estimate of:
+
+- The time to the most recent common ancestor (TMRCA)
+- The rate of evolution
 
 ```{r,echo=FALSE}
 actionButton("rtt","Root-to-tip regression")
 treertt <- reactive({
   if(input$rtt==0) return()
-    tr.rtt <- tr()
-    tr.rtt <- multi2di(tr.rtt)
-    tr.rtt$edge.length <- tr.rtt$edge.length+1e-6
-    td <- tr.rtt$tip.label %>% strsplit(.,"_|-") %>% lapply(.,tail,1) %>% unlist %>% as.double
-    tr.rtt <- rtt(tr.rtt,td,objective="rsquared")
-    tr.rtt
+  annot <- annotations()
+  tr.rtt <- tr()
+  tr.rtt <- multi2di(tr.rtt)
+  tr.rtt$edge.length <- tr.rtt$edge.length+1e-6
+  td <- as.double(annot[match(tr.rtt$tip.label,annot[,1]),2])
+  tr.rtt <- rtt(tr.rtt,td,objective="rsquared")
+  tr.rtt
 })
-renderPlot({
+treelm <- reactive({
+  if(input$rtt==0) return()
   tr.rtt <- treertt()
   rd <- distRoot(tr.rtt)
-  td <- tr.rtt$tip.label %>% strsplit(.,"_|-") %>% lapply(.,tail,1) %>% unlist %>% as.double
+  annot <- annotations()
+  td <- as.double(annot[match(tr.rtt$tip.label,annot[,1]),2])
   rtt.lm <- lm(rd~td)
   root.time <- unname(-as.double(coef(rtt.lm)[1])/coef(rtt.lm)[2])
-  plot(rd~td,xlab="Time",ylab="Root to tip distance",ylim=c(0,max(rd)),xlim=c(root.time,max(td)),pch=16,col="red")
-  abline(rtt.lm)
-abline(h=0,lty=2)
+  list(root.time,rd,td,rtt.lm)
 })
 ```
 
-## 'Clockifying' a tree
+This plot illustrates the observed and predicted root-to-tip distances based on sampling time.
+
+```{r, echo=FALSE}
+renderPlot({
+  if(input$rtt==0) return()
+  tr.lm <- treelm()
+  rd <- tr.lm[[2]]
+  td <- tr.lm[[3]]
+  root.time <- tr.lm[[1]]
+  plot(rd~td,xlab="Time",ylab="Root to tip distance",ylim=c(0,max(rd)),xlim=c(root.time,max(td)),pch=16,col="red")
+  abline(tr.lm[[4]])
+  abline(h=0,lty=2)
+})
+```
+
+Here is the summary of the root-to-tip regression.
 
 ```{r,echo=FALSE}
-actionButton("clockify","Clockify!")
-treertt <- reactive({
-  if(input$rtt==0) return()
-    tr.rtt <- tr()
-    tr.rtt <- multi2di(tr.rtt)
-    tr.rtt$edge.length <- tr.rtt$edge.length+1e-6
-    td <- tr.rtt$tip.label %>% strsplit(.,"_|-") %>% lapply(.,tail,1) %>% unlist %>% as.double
-    tr.rtt <- rtt(tr.rtt,td,objective="rsquared")
-    tr.rtt
+renderPrint({
+  if(input$rtt==0) return(invisible())
+  summary(treelm()[[4]])
 })
+```
+
+The TMRCA can be calculated from this regression.
+
+```{r, echo=FALSE}
+renderPrint({
+  if(input$rtt==0) return(invisible())
+  tlm <- treelm()
+  paste("The TMRCA is",tlm[[1]])
+})
+```
+
+
+## 'Clockifying' a tree
+
+The next step is to make the tree actually follow a clock. The button below will fit a strict clock, then plot the groups onto the tree.
+
+```{r,echo=FALSE}
+inputPanel(
+  numericInput("roottime","Root time", 0),
+  actionButton("clockify","Clockify!")
+)
 renderPlot({
-  tr.rtt <- treertt()
-  rd <- distRoot(tr.rtt)
-  td <- tr.rtt$tip.label %>% strsplit(.,"_|-") %>% lapply(.,tail,1) %>% unlist %>% as.double
-  rtt.lm <- lm(rd~td)
-  root.time <- unname(-as.double(coef(rtt.lm)[1])/coef(rtt.lm)[2])
-  plot(rd~td,xlab="Time",ylab="Root to tip distance",ylim=c(0,max(rd)),xlim=c(root.time,max(td)),pch=16,col="red")
-  abline(rtt.lm)
-abline(h=0,lty=2)
+  if(input$clockify==0) return()
+  tree.dated <- clockify()
+  dated.tree <- read.tree(text=write.tree(tree.dated))
+  annot <- annotations()
+  g <- ggtree(dated.tree)+theme_tree2()
+  g <- g %<+% annot
+  g + geom_tippoint(aes(color=Group),size=2)+theme(legend.position="right")
+})
+```
+
+```{r, echo=FALSE}
+clockify <- reactive({
+  if(input$clockify==0) return()
+    tr.rtt <- treertt()
+    root.time <- as.double(input$roottime)
+    calibrating.values <- makeChronosCalib(tr.rtt)
+    annot <- annotations()
+    td <- as.double(annot[match(tr.rtt$tip.label,annot[,1]),2])
+    max.time <- max(td)
+    calibrating.values$age.min <- max.time - root.time
+    calibrating.values$age.max <- max.time - root.time
+    calibrating.values <- rbind(calibrating.values,
+                            data.frame(node=seq(1,length(td)),
+                                       age.min=max.time - td,
+                                       age.max=max.time - td,
+                                       soft.bounds=FALSE))
+
+    dated.tree <- RLchronos(tr.rtt, 
+                     lambda=1, 
+                     model="discrete", 
+                     calibration=calibrating.values,
+                     control=chronos.control(nb.rate.cat=1))
+    dated.tree
 })
 ```

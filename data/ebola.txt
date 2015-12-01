@@ -1,4 +1,4 @@
-Taxa	Time	Country
+Taxa	Time	Group
 EBOV_AF272001_Mayinga_Yambuku_DRC_1976	1976	DRC
 EBOV_KC242801_deRoover_DRC_1976	1976	DRC
 EBOV_KC242800_Ilembe_Gabon_2002	2002	Gabon

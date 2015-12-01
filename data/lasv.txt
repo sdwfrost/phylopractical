@@ -1,4 +1,4 @@
-Taxa	Time	Host
+Taxa	Time	Group
 G502-L-SLE_2009	2009	Human
 G1180-L-SLE_2010	2010	Human
 G503-L-SLE_2009	2009	Human
